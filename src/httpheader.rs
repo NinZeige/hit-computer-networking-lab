@@ -14,14 +14,22 @@ impl Method {
             _ => None,
         }
     }
+
+    fn to_str(&self) -> &str {
+        match self {
+            Self::Get => "GET",
+            Self::Post => "POST",
+            Self::Connect => "CONNECT",
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct HttpHeader {
     method: Method,
-    url: String,
+    pub url: String,
     cookie: Vec<String>,
-    host: String,
+    pub host: String,
 }
 
 impl HttpHeader {
@@ -56,5 +64,24 @@ impl HttpHeader {
             host: host?,
             cookie,
         })
+    }
+    
+    pub fn construct(&self, crlf: bool) -> String {
+        let brk = if crlf { "\r\n" } else { "\n" };
+        let http_ver = "HTTP/1.1";
+        let tail = vec![
+            "User-Agent: Wget/1.21.4",
+            "Accept: */*",
+            "Accept-Encoding: identity",
+            "Connection: Keep-Alive",
+            "Proxy-Connection: Keep-Alive",
+        ];
+        let mut head = format!("{} {} {}{}", self.method.to_str(), self.url, http_ver, brk);
+        head = head + "Host: " + self.host.as_str() + brk;
+        for line in tail {
+            head += line;
+            head += brk;
+        }
+        return head;
     }
 }
