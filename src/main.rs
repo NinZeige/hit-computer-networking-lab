@@ -42,6 +42,11 @@ fn handle_single(sock: Socket) -> io::Result<()> {
     let mut buffer: [MaybeUninit<u8>; 65515] = unsafe { MaybeUninit::uninit().assume_init() };
     let size = sock.recv(&mut buffer)?;
 
+    // helpers, handle with MaybeUninit
+    let get_slice = |buf: &mut [MaybeUninit<u8>], siz| unsafe {
+        std::slice::from_raw_parts(buf.as_ptr() as *const u8, siz)
+    };
+
     // parse what socket read to string
     let content: String = (0..size)
         .map(|i| unsafe { buffer[i].assume_init() as char })
@@ -50,16 +55,33 @@ fn handle_single(sock: Socket) -> io::Result<()> {
         io::ErrorKind::InvalidData,
         "Failed to resolve request head",
     ))?;
-    
+    report_local(&head)?;
+
     // send remote
     let remote_addr: SocketAddr = head.host.to_socket_addrs()?.next().ok_or(io::Error::new(
         io::ErrorKind::AddrNotAvailable,
         "Cannot resolve address",
     ))?;
-
     let remote_sock = Socket::new(Domain::IPV4, Type::STREAM, None)?;
     remote_sock.connect(&remote_addr.into())?;
-    remote_sock.send(buffer);
 
+    // send back local
+    let _ = remote_sock.send(get_slice(&mut buffer, size))?;
+    let mut resize = 0;
+    loop {
+        let size = remote_sock.recv(&mut buffer[resize..])?;
+        resize += size;
+        if size == 0 {
+            break;
+        }
+    }
+    let _ = sock.send(get_slice(&mut buffer, resize))?;
+
+    Ok(())
+}
+
+
+fn report_local(head: &httpheader::HttpHeader) -> io::Result<()> {
+    println!("Local connection: \n Hosts: {}\n Url: {}\n\n", head.host, head.url);
     Ok(())
 }

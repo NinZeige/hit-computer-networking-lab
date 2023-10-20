@@ -65,7 +65,7 @@ impl HttpHeader {
             cookie,
         })
     }
-    
+
     pub fn construct(&self, crlf: bool) -> String {
         let brk = if crlf { "\r\n" } else { "\n" };
         let http_ver = "HTTP/1.1";
