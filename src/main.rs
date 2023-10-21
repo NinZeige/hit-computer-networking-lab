@@ -67,7 +67,7 @@ fn handle_single(sock: Socket) -> io::Result<()> {
     let rule = Rule {
         direct: vec![],
         fish: vec![String::from("sjtu.edu.cn")],
-        ban: vec![],
+        ban: vec![String::from("example.com")],
     };
 
     report_local(&head)?;
@@ -82,19 +82,27 @@ fn handle_single(sock: Socket) -> io::Result<()> {
 
 fn report_local(head: &HttpHeader) -> io::Result<()> {
     println!(
-        "Local connection: \n Hosts: {}\n Url: {}\n\n",
+        "Local connection: \n Hosts: {}\n Url: {}\n",
         head.host, head.url
     );
     Ok(())
 }
 
 fn connect_dir(lsock: Socket, head: HttpHeader) -> io::Result<()> {
+    println!("😃 Direct connection: {}", head.host);
     let mut buffer: [MaybeUninit<u8>; 65515] = unsafe { MaybeUninit::uninit().assume_init() };
     // send remote
-    let remote_addr: SocketAddr = head.host.to_socket_addrs()?.next().ok_or(io::Error::new(
+    let mut host = head.host.clone();
+    if !host.contains(":") {
+        host += ":80";
+    }
+    let remote_addr: SocketAddr = host.to_socket_addrs()?.next().ok_or_else(|| {
+        println!("Cannot resolve addr");
+        io::Error::new(
         io::ErrorKind::AddrNotAvailable,
         "Cannot resolve address",
-    ))?;
+    )})?;
+    println!("resolve url: {:?}", remote_addr);
     let remote_sock = Socket::new(Domain::IPV4, Type::STREAM, None)?;
     remote_sock.connect(&remote_addr.into())?;
     // send back local
