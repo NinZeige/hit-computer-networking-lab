@@ -5,6 +5,15 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use std::process;
 use std::thread;
 mod httpheader;
+use std::fs;
+use httpheader::*;
+
+pub const RESPON_NAME: &str = "HTTP/1.1 200 OK\r
+Content-Length: 4902\r
+Content-Type: text/html; charset=utf-8\r
+Date: Sat, 21 Oct 2023 00:59:19 GMT\r
+Server: fishman\r
+\r\n";
 
 fn main() {
     if let Err(e) = run() {
@@ -37,26 +46,50 @@ fn run() -> io::Result<()> {
     Ok(())
 }
 
+fn get_slice(buf: &mut [MaybeUninit<u8>], siz: usize) -> &[u8] {
+    unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, siz) }
+}
+
 fn handle_single(sock: Socket) -> io::Result<()> {
     // recv local
     let mut buffer: [MaybeUninit<u8>; 65515] = unsafe { MaybeUninit::uninit().assume_init() };
     let size = sock.recv(&mut buffer)?;
 
-    // helpers, handle with MaybeUninit
-    let get_slice = |buf: &mut [MaybeUninit<u8>], siz| unsafe {
-        std::slice::from_raw_parts(buf.as_ptr() as *const u8, siz)
-    };
-
     // parse what socket read to string
     let content: String = (0..size)
         .map(|i| unsafe { buffer[i].assume_init() as char })
         .collect();
-    let head = httpheader::HttpHeader::from(&content).ok_or(io::Error::new(
+    let head = HttpHeader::from(&content).ok_or(io::Error::new(
         io::ErrorKind::InvalidData,
         "Failed to resolve request head",
     ))?;
-    report_local(&head)?;
 
+    let rule = Rule {
+        direct: vec![],
+        fish: vec![String::from("sjtu.edu.cn")],
+        ban: vec![],
+    };
+
+    report_local(&head)?;
+    match get_filter(&head, &rule) {
+        ProxyType::Direct => connect_dir(sock, head)?,
+        ProxyType::Fish => connect_fish(sock, head)?,
+        _ => refuse(sock, head)?,
+    }
+
+    Ok(())
+}
+
+fn report_local(head: &HttpHeader) -> io::Result<()> {
+    println!(
+        "Local connection: \n Hosts: {}\n Url: {}\n\n",
+        head.host, head.url
+    );
+    Ok(())
+}
+
+fn connect_dir(lsock: Socket, head: HttpHeader) -> io::Result<()> {
+    let mut buffer: [MaybeUninit<u8>; 65515] = unsafe { MaybeUninit::uninit().assume_init() };
     // send remote
     let remote_addr: SocketAddr = head.host.to_socket_addrs()?.next().ok_or(io::Error::new(
         io::ErrorKind::AddrNotAvailable,
@@ -64,24 +97,25 @@ fn handle_single(sock: Socket) -> io::Result<()> {
     ))?;
     let remote_sock = Socket::new(Domain::IPV4, Type::STREAM, None)?;
     remote_sock.connect(&remote_addr.into())?;
-
     // send back local
-    let _ = remote_sock.send(get_slice(&mut buffer, size))?;
-    let mut resize = 0;
-    loop {
-        let size = remote_sock.recv(&mut buffer[resize..])?;
-        resize += size;
-        if size == 0 {
-            break;
-        }
-    }
-    let _ = sock.send(get_slice(&mut buffer, resize))?;
+    let _ = remote_sock.send(head.construct(true).as_bytes())?;
+    let resize = remote_sock.recv(&mut buffer)?;
+    let _ = lsock.send(get_slice(&mut buffer, resize))?;
 
     Ok(())
 }
 
+fn connect_fish(lsock: Socket, head: HttpHeader) -> io::Result<()> {
+    println!("🎣 Fish connection: {}", head.host);
+    lsock.send(RESPON_NAME.as_bytes())?;
+    // read from filesystem and send
+    let content = fs::read_to_string("./src/page/welcom.html")?;
+    lsock.send(content.as_bytes())?;
+    Ok(())
+}
 
-fn report_local(head: &httpheader::HttpHeader) -> io::Result<()> {
-    println!("Local connection: \n Hosts: {}\n Url: {}\n\n", head.host, head.url);
+fn refuse(lsock: Socket, head: HttpHeader) -> io::Result<()> {
+    println!("Refuse connection to: {}", head.host);
+    lsock.shutdown(std::net::Shutdown::Both)?;
     Ok(())
 }

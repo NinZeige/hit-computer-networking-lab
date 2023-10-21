@@ -5,6 +5,37 @@ enum Method {
     Connect,
 }
 
+pub enum ProxyType {
+    Direct,
+    Fish,
+    Ban,
+}
+
+pub struct Rule {
+    pub direct: Vec<String>,
+    pub fish: Vec<String>,
+    pub ban: Vec<String>,
+}
+
+pub fn get_filter(head: &HttpHeader, rule: &Rule) -> ProxyType {
+    for d in &rule.direct {
+        if head.host.starts_with(d) {
+            return ProxyType::Direct;
+        }
+    }
+    for d in &rule.fish {
+        if head.host.starts_with(d) {
+            return ProxyType::Fish;
+        }
+    }
+    for d in &rule.ban {
+        if head.host.starts_with(d) {
+            return ProxyType::Ban;
+        }
+    }
+    return ProxyType::Direct;
+}
+
 impl Method {
     fn from_str(s: &str) -> Option<Method> {
         match s {
@@ -24,6 +55,7 @@ impl Method {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct HttpHeader {
     method: Method,
@@ -82,6 +114,7 @@ impl HttpHeader {
             head += line;
             head += brk;
         }
+        head += brk;
         return head;
     }
 }
