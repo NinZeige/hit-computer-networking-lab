@@ -54,7 +54,7 @@ fn get_slice(buf: &mut [MaybeUninit<u8>], siz: usize) -> &[u8] {
     unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, siz) }
 }
 
-fn handle_single(sock: Socket) -> io::Result<()> {
+fn run_connect(sock: Socket) -> io::Result<()> {
     // recv local
     let mut buffer: [MaybeUninit<u8>; 65515] = unsafe { MaybeUninit::uninit().assume_init() };
     let size = sock.recv(&mut buffer)?;
@@ -93,19 +93,24 @@ fn report_local(head: &HttpHeader) -> io::Result<()> {
 }
 
 fn connect_dir(lsock: Socket, head: HttpHeader) -> io::Result<()> {
-    println!("😃 Direct connection: {}", head.host);
+    println!("😄 Direct connection: {}", head.host);
     let mut buffer: [MaybeUninit<u8>; 65515] = unsafe { MaybeUninit::uninit().assume_init() };
     // send remote
     let mut host = head.host.clone();
     if !host.contains(":") {
         host += ":80";
     }
-    let remote_addr: SocketAddr = host.to_socket_addrs()?.next().ok_or_else(|| {
-        println!("Cannot resolve addr");
-        io::Error::new(
-        io::ErrorKind::AddrNotAvailable,
-        "Cannot resolve address",
-    )})?;
+    if host.ends_with(":443") {
+        println!("😅 no support for https yet");
+        return Err(io::Error::new(
+            io::ErrorKind::AddrNotAvailable,
+            "Failed with https",
+        ));
+    }
+    let remote_addr: SocketAddr = host
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::AddrNotAvailable, "Cannot resolve address"))?;
     println!("resolve url: {:?}", remote_addr);
     let remote_sock = Socket::new(Domain::IPV4, Type::STREAM, None)?;
     remote_sock.connect(&remote_addr.into())?;
@@ -127,7 +132,17 @@ fn connect_fish(lsock: Socket, head: HttpHeader) -> io::Result<()> {
 }
 
 fn refuse(lsock: Socket, head: HttpHeader) -> io::Result<()> {
-    println!("Refuse connection to: {}", head.host);
+    println!("🚫 Refuse connection to: {}", head.host);
     lsock.shutdown(std::net::Shutdown::Both)?;
+    Ok(())
+}
+
+#[test]
+fn test_addr() -> io::Result<()> {
+    let remote_addr: SocketAddr = "github.com"
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::AddrNotAvailable, "Cannot resolve address"))?;
+    println!("{:?}", remote_addr);
     Ok(())
 }
