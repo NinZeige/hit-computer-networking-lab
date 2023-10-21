@@ -9,7 +9,7 @@ use std::fs;
 use httpheader::*;
 
 pub const RESPON_NAME: &str = "HTTP/1.1 200 OK\r
-Content-Length: 4902\r
+Content-Length: 4905\r
 Content-Type: text/html; charset=utf-8\r
 Date: Sat, 21 Oct 2023 00:59:19 GMT\r
 Server: fishman\r
@@ -32,15 +32,19 @@ fn run() -> io::Result<()> {
     socket.listen(5)?;
 
     // start monitor threads
-    let max_thread = 5;
+    let max_thread = 500;
     for _ in 0..max_thread {
         let (ns, _) = socket.accept()?;
-        let handle = thread::spawn(move || handle_single(ns));
+        let handle = thread::spawn(move || {
+            if let Err(e) = run_connect(ns) {
+                println!("Application Error: {e}");
+            }
+        });
         threads.push(handle);
     }
 
     for thr in threads {
-        thr.join().unwrap()?;
+        thr.join().unwrap();
     }
 
     Ok(())
