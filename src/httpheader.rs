@@ -62,6 +62,7 @@ pub struct HttpHeader {
     pub url: String,
     cookie: Vec<String>,
     pub host: String,
+    cache_time: Option<String>,
 }
 
 impl HttpHeader {
@@ -95,6 +96,7 @@ impl HttpHeader {
             url,
             host: host?,
             cookie,
+            cache_time: None,
         })
     }
 
@@ -109,12 +111,29 @@ impl HttpHeader {
             "Proxy-Connection: Keep-Alive",
         ];
         let mut head = format!("{} {} {}{}", self.method.to_str(), self.url, http_ver, brk);
-        head = head + "Host: " + self.host.as_str() + brk;
+        head = head + "Host: " + &self.host + brk;
         for line in tail {
             head += line;
             head += brk;
         }
+        if self.cache_time.is_some() {
+            head += "If-Modified-Since: ";
+            head += self.cache_time.as_ref().unwrap();
+            head += brk;
+        }
         head += brk;
         return head;
+    }
+
+    pub fn get_uniq_name(&self) -> String {
+        format!("{}{}", self.host, self.url)
+    }
+
+    pub fn set_time(&mut self, t: Option<String>) {
+        self.cache_time = t;
+    }
+
+    pub fn get_time(&self) -> Option<&str> {
+        self.cache_time.as_ref().map(|v| v.as_str())
     }
 }

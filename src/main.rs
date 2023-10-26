@@ -1,12 +1,12 @@
 use socket2::{Domain, Socket, Type};
-use std::io;
+use std::error::Error;
 use std::net::SocketAddr;
 use std::process;
+use std::sync::{Arc, RwLock};
 use std::thread;
 
-mod httpheader;
 mod connect_manager;
-
+mod httpheader;
 
 fn main() {
     if let Err(e) = run() {
@@ -15,7 +15,8 @@ fn main() {
     }
 }
 
-fn run() -> io::Result<()> {
+fn run() -> Result<(), Box<dyn Error>> {
+    let mut cache = Arc::new(RwLock::new(connect_manager::read_cache()?));
     let mut threads = Vec::new();
     let socket = Socket::new(Domain::IPV4, Type::STREAM, None)?;
 
@@ -27,9 +28,10 @@ fn run() -> io::Result<()> {
     // start monitor threads
     let max_thread = 500;
     for _ in 0..max_thread {
-        let (ns, _) = socket.accept()?;
+        let (ns, addr_in) = socket.accept()?;
+        let map = cache.clone();
         let handle = thread::spawn(move || {
-            if let Err(e) = connect_manager::run_connect(ns) {
+            if let Err(e) = connect_manager::run_connect(ns, addr_in, map) {
                 println!("Application Error: {e}");
             }
         });
@@ -42,4 +44,3 @@ fn run() -> io::Result<()> {
 
     Ok(())
 }
-

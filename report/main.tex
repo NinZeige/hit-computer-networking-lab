@@ -1,0 +1,145 @@
+\documentclass{ctexart}
+\usepackage[a4paper, margin={1.25in, 1in}]{geometry}
+\usepackage{graphicx} % Required for inserting images
+\usepackage{fontspec}
+\usepackage{multirow}
+\usepackage{fancyhdr}
+\usepackage{minted}
+
+\newfontfamily\caskaydiafont{CaskaydiaCove Nerd Font}[NFSSFamily=ccnf]
+
+% minted 设置
+\setminted[rust]{
+  fontfamily=ccnf,
+  fontsize=\small,
+  style=default, % 可以改为其他内置的样式
+  tabsize=4,
+  breaklines,
+  breakafter=d,
+  breakafter=.,
+  frame=single,
+  framesep=2mm,
+  rulecolor=\color{black}
+}
+
+
+\graphicspath{{assets/}}
+
+
+% 设定页眉样式
+\pagestyle{fancy}
+\fancyhf{} % 清空现有的页眉和页脚设置
+\fancyhead[C]{哈尔滨工业大学计算机网络课程实验报告} % 将“课程实验报告”居中放置在页眉中
+
+
+
+\begin{document}
+\begin{titlepage}
+    \noindent\includegraphics[width=2.41in]{school_logo}
+    \vfill
+    \centering
+
+    \huge \textbf{计算机网络}
+
+    \huge \textbf{课程实验报告}
+    
+    \vspace*{2cm}
+    
+    \centering
+    \normalsize
+    \begin{tabular}{|cclcccc|}
+        \hline
+        \multicolumn{1}{|c|}{实验名称} & \multicolumn{6}{c|}{HTTP 代理服务器的设计与实现} \\ \hline
+        \multicolumn{1}{|c|}{姓名}   & \multicolumn{2}{c|}{林泽矩} & \multicolumn{1}{c|}{院系}   & \multicolumn{3}{c|}{计算学部} \\ \hline
+        \multicolumn{1}{|c|}{班级}   & \multicolumn{2}{c|}{202103} & \multicolumn{1}{c|}{学号}   & \multicolumn{3}{c|}{210110214} \\ \hline
+        \multicolumn{1}{|c|}{任课教师} & \multicolumn{2}{c|}{聂兰顺} & \multicolumn{1}{c|}{指导老师} & \multicolumn{3}{c|}{} \\ \hline
+        \multicolumn{1}{|c|}{实验地点} & \multicolumn{2}{c|}{} & \multicolumn{1}{c|}{实验时间} & \multicolumn{3}{c|}{2023年10月21日} \\ \hline
+        \multicolumn{1}{|c|}{\multirow{2}{*}{实验课表现}} &
+        \multicolumn{1}{l|}{\begin{tabular}[c]{@{}l@{}}出勤、表现得分\\ (10)\end{tabular}} &
+        \multicolumn{1}{p{1cm}|}{} &
+        \multicolumn{1}{c|}{\multirow{2}{*}{实验报告得分 (40)}} &
+        \multicolumn{1}{c|}{\multirow{2}{*}{}} &
+        \multicolumn{1}{c|}{\multirow{2}{*}{实验总分}} &
+        \multirow{2}{*}{} \\ \cline{2-3}
+        \multicolumn{1}{|c|}{} &
+        \multicolumn{1}{l|}{操作结果得分(50)} &
+        \multicolumn{1}{l|}{} &
+        \multicolumn{1}{c|}{} &
+        \multicolumn{1}{p{1cm}|}{} &
+        \multicolumn{1}{c|}{} &
+        \multicolumn{1}{p{1cm}|}{} 
+        \\ \hline
+        \multicolumn{7}{|c|}{教师评语}                                                                             \\ \hline
+        \multicolumn{7}{|c|}{} \\
+        \multicolumn{7}{|c|}{} \\
+        \multicolumn{7}{|c|}{} \\
+        \multicolumn{7}{|c|}{} \\
+        \multicolumn{7}{|c|}{} \\
+        \multicolumn{7}{|c|}{} \\
+        \multicolumn{7}{|c|}{} \\
+        \multicolumn{7}{|c|}{} \\ \hline
+    \end{tabular}
+    \vfill
+
+    \includegraphics[width=2.68in]{foc_logo}
+
+\end{titlepage}
+
+\section*{一、实验目的}
+
+\begin{itemize}
+    \item 熟悉并掌握 Socket ⽹络编程的过程与技术
+    \item 深⼊理解 HTTP 协议，掌握 HTTP 代理服务器的基本⼯作原理
+    \item 掌握 HTTP 代理服务器的基本⼯作原理
+    \item 掌握 HTTP 代理服务器设计与编程实现的基本技能
+\end{itemize}
+
+\section*{二、实验内容}
+
+\begin{enumerate}
+    \item 设计一个基本的HTTP代理服务器，代理来自客户的HTTP请求（已完成）
+    \item 设计并实现一个支持Cache功能的HTTP代理服务器。（已完成）
+    \item 扩展HTTP代理服务器，支持如下功能：\begin{enumerate}
+            \item 网站过滤（已完成）
+            \item 用户过滤（已完成）
+            \item 网站引导（已完成）
+    \end{enumerate}
+\end{enumerate}
+
+\section*{三、实验过程}
+
+\subsection*{内容讨论}
+
+\begin{enumerate}
+    \item \textbf{系统代理/浏览器代理}: 现在网络环境大部分为HTTPS协议，正确的HTTPS代理需要涉及到SSL证书认证等过程，这种
+    任务无法由简单的\texttt{socket}编程完成，因此本实验中无法处理HTTPS流量。设置系统代理会将系统中大量的HTTPS流量，
+    诸如微软账户相关的后台服务，浏览器登陆相关服务，浏览器新闻版面内容刷新请求等，全部发送到软件代理的端口中，极大影响
+    软件调试的过程。为了方便调试，采用了浏览器代理插件将部分流量单独重定向到程序中，或者在命令行中设置HTTP代理服务器的环境变量。
+    \item \textbf{目的网站选择}: 同上一点，由于大部分网站都已经采用HTTPS协议，因此需要精挑细选仍使用HTTP请求的网站。
+    为了方便实验，我选择了在自己的服务器上使用\texttt{python-flask} + \texttt{Witress} 搭了一个简易的HTTP网页服务器
+    用于测试。此外在校园网内也可以使用校内网站作为测试目标，大部分校内网站服务都未使用HTTPS，例如教务系统的首页等。
+    \item \textbf{钓鱼网站}: 由于题目中要求引导至`模拟网站'，因此钓鱼功能上选择使用文件系统中保存的静态网页回复，而非
+    将流量重定向至另一个网站页面。
+\end{enumerate}
+
+
+\section*{四、实验结果}
+
+\section*{五、问题讨论}
+
+\section*{六、心得体会}
+
+\section*{七、程序源代码}
+
+本实验使用Rust实现
+
+\begin{minted}[label=\texttt{main.rs}]{rust}
+fn main() {
+    if let Err(e) = run() {
+        println!("Application Error: {e}");
+        process::exit(1);
+    }
+}
+\end{minted}
+
+\end{document}
