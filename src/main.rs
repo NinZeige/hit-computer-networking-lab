@@ -16,7 +16,7 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
-    let mut cache = Arc::new(RwLock::new(connect_manager::read_cache()?));
+    let cache = Arc::new(RwLock::new(connect_manager::read_cache()?));
     let mut threads = Vec::new();
     let socket = Socket::new(Domain::IPV4, Type::STREAM, None)?;
 
@@ -26,7 +26,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     socket.listen(5)?;
 
     // start monitor threads
-    let max_thread = 500;
+    let max_thread = 20;
     for _ in 0..max_thread {
         let (ns, addr_in) = socket.accept()?;
         let map = cache.clone();
@@ -41,6 +41,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     for thr in threads {
         thr.join().unwrap();
     }
+
+    connect_manager::write_cahce(cache.read().unwrap().to_owned())?;
 
     Ok(())
 }

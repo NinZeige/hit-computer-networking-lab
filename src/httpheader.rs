@@ -17,7 +17,7 @@ pub struct Rule {
     pub ban: Vec<String>,
 }
 
-pub fn get_filter(head: &HttpHeader, rule: &Rule) -> ProxyType {
+pub fn get_filter(head: &RequestHeader, rule: &Rule) -> ProxyType {
     for d in &rule.direct {
         if head.host.starts_with(d) {
             return ProxyType::Direct;
@@ -57,7 +57,7 @@ impl Method {
 
 #[allow(dead_code)]
 #[derive(Debug)]
-pub struct HttpHeader {
+pub struct RequestHeader {
     method: Method,
     pub url: String,
     cookie: Vec<String>,
@@ -65,8 +65,14 @@ pub struct HttpHeader {
     cache_time: Option<String>,
 }
 
-impl HttpHeader {
-    pub fn from(msg: &str) -> Option<HttpHeader> {
+pub struct RespondHeader {
+    pub code: u8,
+    pub length: u16,
+    pub content: Vec<u8>,
+}
+
+impl RequestHeader {
+    pub fn from(msg: &str) -> Option<RequestHeader> {
         let mut lines = msg.lines();
         let parts: Vec<&str> = lines.next()?.split_whitespace().collect();
         if parts.len() < 3 {
@@ -91,7 +97,7 @@ impl HttpHeader {
             }
         }
 
-        Some(HttpHeader {
+        Some(RequestHeader {
             method,
             url,
             host: host?,
@@ -129,11 +135,34 @@ impl HttpHeader {
         format!("{}{}", self.host, self.url)
     }
 
-    pub fn set_time(&mut self, t: Option<String>) {
-        self.cache_time = t;
+    pub fn set_time(&mut self, t: String) {
+        self.cache_time = Some(t);
     }
 
     pub fn get_time(&self) -> Option<&str> {
         self.cache_time.as_ref().map(|v| v.as_str())
     }
+}
+
+#[test]
+fn test_construct() {
+    let header = RequestHeader {
+        host: String::from("182.43.76.137:6500"),
+        method: Method::Get,
+        url: String::from("/"),
+        cookie: Vec::new(),
+        cache_time: None,
+    };
+    println!("{}", header.construct(true));
+    println!("{:?}", header);
+
+    let header = RequestHeader {
+        host: String::from("182.43.76.137:6500"),
+        method: Method::Get,
+        url: String::from("/"),
+        cookie: Vec::new(),
+        cache_time: Some(String::from("Wed, 21 Oct 2015 07:28:00 GMT")),
+    };
+    println!("{:?}", header.construct(true));
+    println!("{:?}", header);
 }

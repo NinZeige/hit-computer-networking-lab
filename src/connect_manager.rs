@@ -5,19 +5,22 @@ use socket2::{Domain, SockAddr, Socket, Type};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
-use std::io;
+use std::io::{self, ErrorKind};
 use std::mem::MaybeUninit;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::{Arc, RwLock};
 
-#[derive(Debug)]
-pub struct CacheEntry {
-    pub content: String,
-    pub time: String,
+fn get_slice(data: &[MaybeUninit<u8>], len: usize) -> &[u8] {
+    unsafe {
+        let ptr = data.as_ptr() as *const u8;
+        std::slice::from_raw_parts(ptr, len)
+    }
 }
 
-fn get_slice(buf: &mut [MaybeUninit<u8>], siz: usize) -> &[u8] {
-    unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, siz) }
+#[derive(Debug, Clone)]
+pub struct CacheEntry {
+    pub content: Vec<u8>,
+    pub time: String,
 }
 
 pub const RESPON_NAME: &str = "HTTP/1.1 200 OK\r
@@ -32,8 +35,8 @@ pub fn run_connect(
     addr: SockAddr,
     cache: Arc<RwLock<HashMap<String, CacheEntry>>>,
 ) -> Result<(), Box<dyn Error>> {
-    let addr = addr.as_socket_ipv4().ok_or(io::Error::new(
-        io::ErrorKind::AddrNotAvailable,
+    let _ = addr.as_socket_ipv4().ok_or(io::Error::new(
+        ErrorKind::AddrNotAvailable,
         "Not IPv4 connection",
     ))?;
     // recv local
@@ -44,19 +47,22 @@ pub fn run_connect(
     let content: String = (0..size)
         .map(|i| unsafe { buffer[i].assume_init() as char })
         .collect();
-    let mut head = HttpHeader::from(&content).ok_or(io::Error::new(
-        io::ErrorKind::InvalidData,
+    let mut head = RequestHeader::from(&content).ok_or(io::Error::new(
+        ErrorKind::InvalidData,
         "Failed to resolve request head",
     ))?;
 
+    let cache_ent = cache
+        .read()
+        .unwrap()
+        .get(&head.get_uniq_name())
+        .map(|v| v.clone());
     // check if already cached
-    head.set_time(
-        cache
-            .read()
-            .unwrap()
-            .get(head.get_uniq_name().as_str())
-            .map(|v| v.time.clone()),
-    );
+    let mut cache_str = None;
+    if let Some(ent) = cache_ent {
+        cache_str = Some(ent.content);
+        head.set_time(ent.time);
+    }
 
     let rule = Rule {
         direct: vec![],
@@ -65,7 +71,7 @@ pub fn run_connect(
     };
 
     match get_filter(&head, &rule) {
-        ProxyType::Direct => connect_dir(sock, head, cache)?,
+        ProxyType::Direct => connect_dir(sock, head, cache, cache_str)?,
         ProxyType::Fish => connect_fish(sock, head)?,
         _ => refuse(sock, head)?,
     }
@@ -73,18 +79,37 @@ pub fn run_connect(
     Ok(())
 }
 
-fn connect_dir(lsock: Socket, head: HttpHeader, cache: Arc<RwLock<HashMap<String, CacheEntry>>>) -> io::Result<()> {
+fn recv_fullhttp(buffer: &mut [MaybeUninit<u8>], rsock: Socket) -> io::Result<RequestHeader>{
+    // get http respond head
+    let resize = rsock.recv(&mut buffer)?;
+    let trunk = get_slice(&buffer, resize);
+    let head = String::from_utf8_lossy(trunk);
+    if let Some(x) = head.find("\r\n\r\n") {
+        
+        Ok(())
+    } else {
+        Err(io::Error::new(ErrorKind::InvalidData, "cannot resolve http response"))
+    }
+}
+
+fn connect_dir(
+    lsock: Socket,
+    head: RequestHeader,
+    cache: Arc<RwLock<HashMap<String, CacheEntry>>>,
+    cache_str: Option<Vec<u8>>,
+) -> io::Result<()> {
     println!("😄 Direct connection: {}", head.host);
     let mut buffer: [MaybeUninit<u8>; 65515] = unsafe { MaybeUninit::uninit().assume_init() };
     // send remote
-    let mut host = head.host.clone();
-    if !host.contains(":") {
-        host += ":80";
-    }
+    let host = if head.host.contains(":") {
+        head.host.to_string()
+    } else {
+        format!("{}:80", head.host)
+    };
     if host.ends_with(":443") {
         println!("🔐 uh-oh, no support for https yet");
         return Err(io::Error::new(
-            io::ErrorKind::AddrNotAvailable,
+            ErrorKind::AddrNotAvailable,
             "Failed with https",
         ));
     }
@@ -92,27 +117,58 @@ fn connect_dir(lsock: Socket, head: HttpHeader, cache: Arc<RwLock<HashMap<String
     let remote_addr: SocketAddr = host
         .to_socket_addrs()?
         .next()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::AddrNotAvailable, "Cannot resolve address"))?;
+        .ok_or_else(|| io::Error::new(ErrorKind::AddrNotAvailable, "Cannot resolve address"))?;
     println!("resolve url: {:?}", remote_addr);
     let remote_sock = Socket::new(Domain::IPV4, Type::STREAM, None)?;
     remote_sock.connect(&remote_addr.into())?;
+    remote_sock.send(head.construct(true).as_bytes())?;
 
-    let _ = remote_sock.send(head.construct(true).as_bytes())?;
     let resize = remote_sock.recv(&mut buffer)?;
-    if let Some(_) = head.get_time() {
+    let raw_buff = get_slice(&buffer, resize);
+
+    if head.get_time().is_some() {
         println!("🔍 find cache: true");
-        
+
+        let recv_str: String = String::from_utf8_lossy(raw_buff).into_owned();
+        if let Some(line) = recv_str.lines().next() {
+            if let Some(code) = line.split_ascii_whitespace().nth(1) {
+                return match code {
+                    "304" if cache_str.is_some() => {
+                        println!("network return not-modified");
+                        lsock.send(cache_str.unwrap().as_slice())?;
+                        Ok(())
+                    }
+                    _ => update_and_send(lsock, cache, raw_buff, head.url),
+                };
+            }
+        }
+        Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "Invalid http response",
+        ))
     } else {
-        println!("🔍 find cache: false")
+        println!("🔍 find cache: false");
+        update_and_send(lsock, cache, raw_buff, head.url)
     }
-
-    // send back local
-    let _ = lsock.send(get_slice(&mut buffer, resize))?;
-
-    Ok(())
 }
 
-fn connect_fish(lsock: Socket, head: HttpHeader) -> io::Result<()> {
+fn update_and_send(
+    lsock: Socket,
+    cache: Arc<RwLock<HashMap<String, CacheEntry>>>,
+    recv_str: &[u8],
+    url: String,
+) -> io::Result<()> {
+    cache.write().unwrap().insert(
+        url,
+        CacheEntry {
+            content: recv_str.into_iter().map(|&v| v.clone()).collect(),
+            time: get_gmttime(),
+        },
+    );
+    lsock.send(recv_str).map(|_| ())
+}
+
+fn connect_fish(lsock: Socket, head: RequestHeader) -> io::Result<()> {
     println!("🎣 Fish connection: {}", head.host);
     lsock.send(RESPON_NAME.as_bytes())?;
     // read from filesystem and send
@@ -121,7 +177,7 @@ fn connect_fish(lsock: Socket, head: HttpHeader) -> io::Result<()> {
     Ok(())
 }
 
-fn refuse(lsock: Socket, head: HttpHeader) -> io::Result<()> {
+fn refuse(lsock: Socket, head: RequestHeader) -> io::Result<()> {
     println!("🚫 Refuse connection to: {}", head.host);
     lsock.shutdown(std::net::Shutdown::Both)?;
     Ok(())
@@ -140,7 +196,7 @@ pub fn read_cache() -> Result<HashMap<String, CacheEntry>, Box<dyn Error>> {
                 res.insert(
                     String::from_utf8_lossy(&tmpk).into_owned(),
                     CacheEntry {
-                        content: String::from_utf8_lossy(&tmpv).into_owned(),
+                        content: tmpv,
                         time: String::from_utf8_lossy(&tmpt).into_owned(),
                     },
                 );
@@ -172,17 +228,19 @@ pub fn write_cahce(cache: HashMap<String, CacheEntry>) -> io::Result<()> {
 #[test]
 fn test_get_store() {
     let mut map = HashMap::new();
+    let content = String::from("This is good");
+
     map.insert(
         String::from("http://www.wenku8.net"),
         CacheEntry {
-            content: String::from("This is good"),
+            content: content.into_bytes(),
             time: String::from("Pretend to be time"),
         },
     );
     map.insert(
         String::from("http://182.43.76.137"),
         CacheEntry {
-            content: String::from("This is right"),
+            content: String::from("This is right").into_bytes(),
             time: String::from("pre to be time"),
         },
     );
