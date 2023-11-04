@@ -1,1 +1,5 @@
 /target
+client_input.txt
+client_output.txt
+server_input.txt
+server_output.txt

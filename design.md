@@ -1,176 +1,107 @@
-1. server
+****# 计网实验2 设计
+
+## 状态机设计
+
+- stage0 基本状态, 可以响应文件发送请求, 命令行输入
+- stage1 发送等待同步状态, 等待另一方确认握手
+- stage2 发送状态, 发送文件并等待ack
+- stage3 接收等待同步, 等待服务端确认握手
+- stage4 接收状态, 接收文件并发送ack
+- stage5 等待对方发送时间
+- stage6 等待对方接收时间
+
+### 关键结构
+
+connection: 维护本链接的信息
++ host: 目标主机
++ src:  当前主机
++ stage: 当前状态机状态
++ tocnt: 超时次数
+
+packet {
+    code,
+    content,
+}
+
+### 码分配
+0-99: 发送方序列号
+100-199: 接收方序列号, ack(code-100)的包
+200: 握手1
+201: 握手2
+202: 握手3
+203: 请求时间
+204: 关闭连接
+其余: 保留
+
+### 状态机转移
 
 stage0
--> '--quit' => quit
--> '--time' => send_time()
--> '--testgbn' => stage = 1 & send_data(205)
+- comm/quit: exit(0)
+- comm/time: send(202) & stage5
+- comm/send: send(200) & stage3
+- net/200: send(201) & stage1
+- net/203: send(time) & stage6
+- other: drop
 
 stage1
--> '200' => stage = 3
--> 'timeout' => send_data(205)
--> 'mutli-timeout' => stage = 0
+- net/201: stage3
+- timeout: send(201)
+- break: stage0
+- other: drop
 
 stage2
--> 'data' => send(data) & wait()
--> 'ack' => update_ack(ack)
--> 'timeout' => resend()
--> 'multi-timeout' => stage = 0
-
-200 ok
-201 respond
-202 quit
-203 time
-204 refuse
-205 start session
-
-2. client
-
-stage0
---> 'quit' => send(quit) & recv()
---> 'time' => send(time) & recv()
---> 'test-gbn' => stage = 1 & send(200)
+- list<ack>: ack(q)
+- timeout: resend
+- break: stage0
 
 stage3
---> '205' => stage = 2 & send(200)
---> 'timeout' => send(200)
---> 'multi-timeout' => stage = 0
+- net/201: send(202) & stage4
+- timeout: send(200)
+- break: stage0
 
-stage
---> 'data' => recv(data) & ack
---> 'timeout' => count
---> 'multi-timeout' => stage = 0
+stage4
+- list<pkt>: save(pkt) & ack(pkt)
+- timeout: nothing
+- break: stage0
 
-server, any one 
---> 'wrong ack' ==> refuse()
+stage5
+- net/time: stage0
+- timeout: send(202)
+- break: stage0
 
-pseudo-code
+stage6
+- timeout: send(202/time)
+- break: stage0
 
-server
-tick = 100ms
-while true {
-    match stage {
-        0 => stage0;
-        1 => stage1;
-        ...
-        n => stagen;
-    }
+
+### API
+
+try_recv()
+
+stage0(Receiver<String>, Connection, Config) {
+
 }
 
-stage0() {
-    result = read_stdin()
-    match result {
-        "quit" => return;
-    }
-    size = try_rec(buffer)
-    if size != 0
-        match buffer.char[0] {
-            200 => send_data(200) && stage = 1;
-            201 => return;
-            202 => send_data(time);
-        }
+stage1(Connection, Config) {
 
-    sleep(tick);
 }
 
-stage1() {
-    size = try_rec(buffer)
-    if size <= 0 {
-        timeout_cnt += 1;
-    } else {
-        match code {
-            200 -> send(200) & stage = 3;
-            - -> refuse();
-        }
-    }
-    tick();
+stage2(Connection, packets, Config) {
+
 }
 
-stage2() {
-    if can_send()
-        send;
+stage3(Connection, Config) {
 
-    size = try_rec(buffer):
-        timeout -> tick
-        mout -> stage = 0;
-        ack -> update_ack();
 }
 
-timeout_cnt = 0
+stage4(Connection, buffer, Config) {
 
-Enum recv_result {
-    time_out,
-    multi_out,
-    code(u8),
 }
 
-send() {
-    for item in Q
-        if Q.Ready {
-            send(Q)
-        }
-    while try_recv() {
-        if packet {
-            for item in Q {
-                if Q.code == packet.code & Q.onfly {
-                    Q.status = Arrived;
-                }
-            }
-        }
-    }
-    while Q.first.Arrived 
-        Q.pop_front()
-    if Q.empty() {
-        Ok(0)
-    }
+stage5(Connection, Config) {
+
 }
 
----
-
-### 选作设计
-
-1. server
-
-stage0
--> '--quit' => quit
--> '--time' => send_time()
--> '--testgbn' => stage = 1 & send_data(205)
-
-stage1
--> '200' => stage = 3
--> 'timeout' => send_data(205)
--> 'mutli-timeout' => stage = 0
-
-stage2
--> 'data' => send(data) & wait()
--> 'ack' => update_ack(ack)
--> 'timeout' => resend()
--> 'multi-timeout' => stage = 0
-
-200 start session
-201 quit
-202 time
-204 refuse
-205 accept
-
-2. client
-
-stage0
---> 'quit' => send(quit) & recv()
---> 'time' => send(time) & recv()
---> 'test-gbn' => stage = 1 & send(200)
-
-stage3
---> '205' => stage = 2 & send(200)
---> 'timeout' => send(200)
---> 'multi-timeout' => stage = 0
-
-stage
---> 'data' => recv(data) & ack
---> 'timeout' => count
---> 'multi-timeout' => stage = 0
-
-
-----
-
-### 选作 pseudo-code
-
+stage6(Connection, Config) {
+    
+}
