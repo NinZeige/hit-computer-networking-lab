@@ -28,6 +28,7 @@ impl Connection {
             .unwrap();
         let local = UdpSocket::bind(local_addr).unwrap();
         local.set_read_timeout(Some(config.single_timeout)).unwrap();
+        local.set_write_timeout(Some(config.single_timeout)).unwrap();
         let timeout = 0;
         let seq = 0;
         Connection {

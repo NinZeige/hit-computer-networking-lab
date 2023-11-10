@@ -37,8 +37,9 @@ fn run(cfg: config::Config) -> Result<(), Box<dyn Error>> {
 
     let mut queue = VecDeque::new();
     let mut offset = 0;
+    let mut end = false;
     loop {
-        offset += update_queue(&mut queue, &data[offset..], &cfg, conn.seq);
+        offset += update_queue(&mut queue, &data[offset..], &cfg, conn.seq, &mut end);
         stage = match stage {
             0 => stage0(&rx, &mut conn, &cfg)?,
             1 => stage1(&mut conn, &cfg)?,
@@ -80,6 +81,7 @@ fn update_queue(
     data: &[u8],
     config: &config::Config,
     seq: u8,
+    end: &mut bool
 ) -> usize {
     let limit = config.window.into();
     let once_data_len = 1024;
@@ -96,6 +98,15 @@ fn update_queue(
         queue.push_back(item);
         count += chunk_size;
         seq += 1;
+    }
+    if !*end && queue.len() < limit && data.len() == count {
+        let end_pack = (
+            MyPacket::with_code(seq),
+            SendStatus::Ready,
+        );
+        println!("end of pack");
+        queue.push_back(end_pack);
+        *end = true;
     }
 
     count
@@ -117,19 +128,19 @@ fn test_update_queue() {
     let mut seq = 0;
     let mut offset = 0;
     let mut expect_offset = 0;
-    offset += update_queue(&mut queue, &data[offset..], &cfg, seq);
+    offset += update_queue(&mut queue, &data[offset..], &cfg, seq, &mut false);
     expect_offset += 1024 * 10;
     assert_eq!(queue.len(), 10);
     assert_eq!(offset, expect_offset);
     // won't update anything this time
-    offset += update_queue(&mut queue, &data[offset..], &cfg, seq);
+    offset += update_queue(&mut queue, &data[offset..], &cfg, seq, &mut false);
     assert_eq!(queue.len(), 10);
     assert_eq!(offset, expect_offset);
 
     for _ in 0..3 {
         queue.pop_front();
     }
-    offset += update_queue(&mut queue, &data[offset..], &cfg, seq);
+    offset += update_queue(&mut queue, &data[offset..], &cfg, seq, &mut false);
     expect_offset += 1024 * 3;
     assert_eq!(queue.len(), 10);
     assert_eq!(offset, expect_offset);
@@ -138,7 +149,7 @@ fn test_update_queue() {
         queue.pop_front();
     }
     seq = 98;
-    offset += update_queue(&mut queue, &data[offset..], &cfg, seq);
+    offset += update_queue(&mut queue, &data[offset..], &cfg, seq, &mut false);
     expect_offset += 1024 * 10;
     assert_eq!(queue.len(), 10);
     assert_eq!(offset, expect_offset);
