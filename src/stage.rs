@@ -223,11 +223,14 @@ pub fn stage4(
             if !to_ack.is_empty() {
                 let codes: Vec<MyPacket> = to_ack
                     .iter()
-                    .map(|pkt| {
-                        if pkt.code > 100 && pkt.code < 200 {
-                            panic!("invalid code: {}", pkt.code);
+                    .filter_map(|pkt| {
+                        if pkt.code < 100 {
+                            // 当 pkt.code 小于 100 时，返回一个 code + 100 的包
+                            Some(MyPacket::with_code(pkt.code + 100))
+                        } else {
+                            // 对于其他情况，跳过这些包
+                            None
                         }
-                        MyPacket::with_code(pkt.code + cfg.seq_siz)
                     })
                     .collect();
                 try_send_lossy(&conn, codes.iter().map(|v| v).collect(), cfg.send_rate)?;
