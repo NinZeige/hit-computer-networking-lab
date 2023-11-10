@@ -4,7 +4,7 @@ mod packet;
 mod stage;
 use packet::MyPacket;
 use stage::*;
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashMap};
 use std::env;
 use std::error::Error;
 use std::io::{self, Write};
@@ -36,6 +36,7 @@ fn run(cfg: config::Config) -> Result<(), Box<dyn Error>> {
     thread::spawn(move || user_input(sx));
 
     let mut queue = VecDeque::new();
+    let mut map = HashMap::new();
     let mut offset = 0;
     let mut end = false;
     loop {
@@ -45,7 +46,7 @@ fn run(cfg: config::Config) -> Result<(), Box<dyn Error>> {
             1 => stage1(&mut conn, &cfg)?,
             2 => stage2(&mut conn, &cfg, &mut queue)?,
             3 => stage3(&mut conn, &cfg)?,
-            4 => stage4(&mut conn, &cfg, &mut file)?,
+            4 => stage4(&mut conn, &cfg, &mut file, &mut map)?,
             5 => stage5(&mut conn, &cfg)?,
             6 => stage6(&mut conn, &cfg)?,
             _ => panic!("invalid stage"),
@@ -53,6 +54,7 @@ fn run(cfg: config::Config) -> Result<(), Box<dyn Error>> {
         if stage == 0 {
             offset = 0;
             queue.clear();
+            map.clear();
         }
     }
 }

@@ -1,7 +1,7 @@
 use crate::config::*;
 use crate::connect::*;
 use crate::packet::{self, MyPacket};
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashMap};
 use std::error::Error;
 use std::io::Write;
 use std::process;
@@ -11,6 +11,7 @@ use std::time;
 pub enum SendStatus {
     Ready,
     OnFly(time::Instant),
+    Acked,
 }
 
 fn handle_break(conn: &mut Connection) -> u32 {
@@ -116,13 +117,9 @@ pub fn stage2(
     }
 
     // check timeout first to avoid repeat send
-    let mut timeout_flag = false;
     for (_, status) in resend_packets.iter_mut() {
         if let SendStatus::OnFly(now) = status {
             if now.elapsed() > cfg.single_timeout {
-                timeout_flag = true;
-            }
-            if timeout_flag {
                 println!("set timeout");
                 *status = SendStatus::Ready;
             }
@@ -151,10 +148,7 @@ pub fn stage2(
                         let ack_code = pkt.code - cfg.seq_siz;
                         if ack_code == packet.code {
                             println!("Acked: {}", packet.code);
-                            let next_code = (ack_code + 1) % cfg.seq_siz;
-                            if cycle_less_than(conn.seq, next_code, cfg) {
-                                conn.seq = next_code;
-                            }
+                            *status = SendStatus::Acked;
                             break;
                         } else if cycle_less_than(ack_code, conn.seq, cfg) {
                             break;
@@ -169,11 +163,11 @@ pub fn stage2(
     // 4. remove finished task
     while resend_packets
         .front()
-        .map_or(false, |(pkt, _)| cycle_less_than(pkt.code, conn.seq, cfg))
+        .map_or(false, |(_, status)| matches!(status, SendStatus::Acked))
     {
         resend_packets.pop_front();
+        conn.seq = (conn.seq + 1) % cfg.seq_siz;
     }
-    conn.seq %= cfg.seq_siz;
 
     Ok(2)
 }
@@ -206,6 +200,7 @@ pub fn stage4(
     conn: &mut Connection,
     cfg: &Config,
     file: &mut std::fs::File,
+    map: &mut HashMap<u8, Vec<u8>>
 ) -> Result<u32, Box<dyn Error>> {
     match try_recv_lossy(&conn.local, conn.timeout, cfg)? {
         RecvRes::Timeout => {
@@ -220,17 +215,10 @@ pub fn stage4(
         RecvRes::Get(pkts) => {
             conn.timeout = 0;
             conn.est = true;
-            let mut accept = Vec::new();
             let mut to_ack = Vec::new();
             for pkt in pkts {
-                    if cycle_less_than(pkt.code, conn.seq, cfg) {
-                        to_ack.push(pkt.clone());
-                    }
-                    if pkt.code == conn.seq {
-                        conn.seq = (conn.seq + 1) % cfg.seq_siz;
-                        to_ack.push(pkt.clone());
-                        accept.push(pkt);
-                    }
+                    to_ack.push(pkt.clone());
+                    map.insert(pkt.code, pkt.content.to_owned());
                 }
             if !to_ack.is_empty() {
                 let codes: Vec<MyPacket> = to_ack
@@ -244,18 +232,17 @@ pub fn stage4(
                     .collect();
                 try_send_lossy(&conn, codes.iter().map(|v| v).collect(), cfg.send_rate)?;
             }
-            if !accept.is_empty() {
-                let mut buffer = Vec::new();
-                
-                let last_pkt = accept.last().unwrap().clone();
-                for pkt in accept.iter_mut() {
-                    buffer.append(&mut pkt.content);
-                }
-                file.write_all(&buffer)?;
-                if last_pkt.content.len() == 0 {
-                    // which indicate the transfer ends
-                    println!("recv finished");
-                    return Ok(0);
+            loop {
+                match map.remove(&conn.seq) {
+                    Some(x) => {
+                        if x.len() == 0 {
+                            println!("recv finished");
+                            return Ok(0);
+                        }
+                        file.write(x.as_slice())?;
+                        conn.seq = (conn.seq + 1) % cfg.seq_siz;
+                    },
+                    None => break,
                 }
             }
             Ok(4)
@@ -409,8 +396,9 @@ fn test_main() {
     let mut conn = Connection::new(&cfg);
     conn.seq = 8;
     let mut file = std::fs::File::create(cfg.output_filename()).unwrap();
+    let mut map = HashMap::new();
     loop {
-        let stage = stage4(&mut conn, &cfg, &mut file).unwrap_or_else(|e| {
+        let stage = stage4(&mut conn, &cfg, &mut file, &mut map).unwrap_or_else(|e| {
             println!("{:?}", e);
             4
         });
