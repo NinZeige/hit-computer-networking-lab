@@ -52,9 +52,11 @@ fn run(cfg: config::Config) -> Result<(), Box<dyn Error>> {
             _ => panic!("invalid stage"),
         };
         if stage == 0 {
-            offset = 0;
             queue.clear();
             map.clear();
+            offset = 0;
+            end = false;
+            conn.seq = 0;
         }
     }
 }
